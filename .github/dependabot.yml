@@ -11,6 +11,12 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # Nested module with no tags of its own. Dependabot maps it to the root
+      # go-containerregistry tag (v0.22.1), which does not contain the package, and
+      # the failure blocks the whole group. Bump it by hand with
+      # `go get github.com/google/go-containerregistry/pkg/authn/kubernetes@main`.
+      - dependency-name: github.com/google/go-containerregistry/pkg/authn/kubernetes
 
   - package-ecosystem: github-actions
     directory: /
