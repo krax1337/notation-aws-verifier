@@ -56,6 +56,10 @@ jobs:
             echo "::error file=$CHART_DIR/Chart.yaml::version is '$chart_version', expected '$version'."
             failed=1
           fi
+          if ! grep -qF "## [$version]" CHANGELOG.md; then
+            echo "::error file=CHANGELOG.md::No '## [$version]' section."
+            failed=1
+          fi
           if [[ "$failed" -ne 0 ]]; then
             exit 1
           fi
@@ -80,11 +84,22 @@ jobs:
           go-version-file: go.mod
           cache: false
       - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          awk -v v="$version" 'index($0, "## [" v "]") == 1 {f=1; next} f && /^## \[/ {exit} f && /^\[[^]]+\]: / {exit} f' \
+            CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/release-notes.md"; then
+            echo "::error::CHANGELOG.md has no '## [$version]' section"
+            exit 1
+          fi
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: v2.18.2
-          args: release --clean
+          args: release --clean --release-notes ${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Attest binaries
@@ -185,6 +200,7 @@ jobs:
           image-ref: ${{ env.IMAGE_NAME }}@${{ needs.image.outputs.digest }}
           severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
           exit-code: "0"
           format: sarif
           output: trivy-image.sarif

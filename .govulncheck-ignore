@@ -1,0 +1,11 @@
+# Vulnerability IDs that hack/govulncheck.sh does not fail on. One ID per line,
+# followed by the reason. Review on every dependency bump; remove when fixed.
+
+# The advisories below cover the whole github.com/kyverno/kyverno module with no
+# fixed version in the Go vulnerability database. They concern features of the
+# Kyverno admission controller itself (apiCall/service calls, context loading
+# across namespaces). This service only imports Kyverno's condition evaluation,
+# JMESPath and image helpers, and never makes Kyverno service or API calls.
+GO-2025-3615 CVE-2025-15613 SSRF via service calls; not used here
+GO-2026-5337 CVE-2026-41068 cross-namespace read in policy context; not used here
+GO-2026-5594 CVE-2026-84196 apiCall SSRF; apiCall not used here
