@@ -1,24 +1,29 @@
-# Binaries for programs and plugins
+# Binaries (anchored so charts/notation-aws-verifier is not ignored)
+/notation-aws-verifier
+/bin/
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-
-# Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool, specifically when used with LiteIDE
+# Build and release output
+/dist/
+/.chart-dist/
+*.tgz
+.manifest/
+
+# Test and coverage output
 *.out
+coverage.*
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
+# Local tooling
+.tools/
+/.idea/
+/.vscode/
+.DS_Store
 
+# AWS Signer artifacts downloaded for local testing
 signer-pre-prod-root.pem
 notation-com.amazonaws.signer.notation.plugin_linux_amd64
-
-.DS_Store
-.tools
-coverage.txt
-/.idea/
-.manifest/

@@ -1,213 +1,125 @@
-############
-# DEFAULTS #
-############
+SHELL         := /usr/bin/env bash
+.SHELLFLAGS   := -euo pipefail -c
+.DEFAULT_GOAL := help
 
-GIT_SHA              := $(shell git rev-parse HEAD)
-REGISTRY             ?= ghcr.io
-REPO                 ?= nirmata
-IMAGENAME            ?= kyverno-notation-aws
-GOOS                 ?= $(shell go env GOOS)
-GOARCH               ?= $(shell go env GOARCH)
-CGO_ENABLED          ?= 0
-REPO_IMAGE           := $(REGISTRY)/$(REPO)/$(IMAGENAME)
-KIND_IMAGE           ?= kindest/node:v1.33.1
-KIND_NAME            ?= kind
-KIND_CONFIG	         ?= default
-BUILD_WITH           ?= docker
+BINARY    := notation-aws-verifier
+VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS   := -s -w -X main.version=$(VERSION)
 
+IMAGE     ?= ghcr.io/krax1337/notation-aws-verifier
+TAG       ?= dev
+IMAGE_REGISTRY   := $(firstword $(subst /, ,$(IMAGE)))
+IMAGE_REPOSITORY := $(patsubst $(IMAGE_REGISTRY)/%,%,$(IMAGE))
 
-#########
-# TOOLS #
-#########
+CHART_DIR ?= charts/notation-aws-verifier
+RELEASE   ?= notation-aws-verifier
+NAMESPACE ?= notation-aws-verifier
+MANIFEST  ?= configs/install.yaml
 
-TOOLS_DIR                          := $(PWD)/.tools
-GO_ACC                             := $(TOOLS_DIR)/go-acc
-GO_ACC_VERSION                     := latest
-KO                                 := $(TOOLS_DIR)/ko
-KO_VERSION                         ?= v0.18.0
-HELM                               := $(TOOLS_DIR)/helm
-HELM_VERSION                       := v3.12.3
-TOOLS                              := $(GO_ACC) $(KO) $(HELM)
-KIND                               ?= $(TOOLS_DIR)/kind
-KIND_VERSION                       ?= v0.29.0
-ifeq ($(GOOS), darwin)
-SED                                := gsed
-else
-SED                                := sed
-endif
-KUBE_VERSION		 ?= v1.25.0
+KIND_CLUSTER    ?= notation-aws-verifier
+KIND_NODE_IMAGE ?=
 
-$(GO_ACC):
-	@echo Install go-acc... >&2
-	@GOBIN=$(TOOLS_DIR) go install github.com/ory/go-acc@$(GO_ACC_VERSION)
+# Tools run through `go run pkg@version`; override any of them to use a local binary.
+GOLANGCI_LINT_VERSION ?= v2.13.2
+HELM_DOCS_VERSION     ?= v1.14.2
+KUBECONFORM_VERSION   ?= v0.8.0
+KIND_VERSION          ?= v0.33.0
+GOLANGCI_LINT ?= go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+HELM_DOCS     ?= go run github.com/norwoodj/helm-docs/cmd/helm-docs@$(HELM_DOCS_VERSION)
+KUBECONFORM   ?= go run github.com/yannh/kubeconform/cmd/kubeconform@$(KUBECONFORM_VERSION)
+# The default schema catalog has no CustomResourceDefinition schema; every other kind must validate.
+KUBECONFORM_FLAGS ?= -strict -summary -skip CustomResourceDefinition
+KIND          ?= go run sigs.k8s.io/kind@$(KIND_VERSION)
+HELM          ?= helm
 
-$(KO):
-	@echo Install ko... >&2
-	@GOBIN=$(TOOLS_DIR) go install github.com/google/ko@$(KO_VERSION)
+##@ General
 
-$(HELM):
-	@echo Install helm... >&2
-	@GOBIN=$(TOOLS_DIR) go install helm.sh/helm/v3/cmd/helm@$(HELM_VERSION)
+.PHONY: help
+help: ## Show this help
+	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n"} \
+		/^[a-zA-Z0-9_-]+:.*?##/ { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 } \
+		/^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) }' $(MAKEFILE_LIST)
 
-$(KIND):
-	@echo Install kind... >&2
-	@GOBIN=$(TOOLS_DIR) go install sigs.k8s.io/kind@$(KIND_VERSION)
+##@ Go
 
-.PHONY: install-tools
-install-tools: $(TOOLS) ## Install tools
-
-.PHONY: clean-tools
-clean-tools: ## Remove installed tools
-	@echo Clean tools... >&2
-	@rm -rf $(TOOLS_DIR)
-
-##############
-# UNIT TESTS #
-##############
-
-CODE_COVERAGE_FILE      := coverage
-CODE_COVERAGE_FILE_TXT  := $(CODE_COVERAGE_FILE).txt
-CODE_COVERAGE_FILE_HTML := $(CODE_COVERAGE_FILE).html
+.PHONY: build
+build: ## Build the binary into bin/
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/$(BINARY) .
 
 .PHONY: test
-test: fmt vet test-clean test-unit ## Clean tests cache then run unit tests
+test: ## Run unit tests with the race detector and coverage
+	go test -race -coverprofile=coverage.out ./...
 
-.PHONY: fmt
-fmt: ## Run go fmt
-	@echo Go fmt... >&2
-	@go fmt ./...
+.PHONY: lint
+lint: ## Run golangci-lint
+	$(GOLANGCI_LINT) run ./...
 
 .PHONY: vet
 vet: ## Run go vet
-	@echo Go vet... >&2
-	@go vet ./...
+	go vet ./...
 
-.PHONY: test-clean
-test-clean: ## Clean tests cache
-	@echo Clean test cache... >&2
-	@go clean -testcache
+.PHONY: fmt
+fmt: ## Format Go code
+	go fmt ./...
 
-.PHONY: test-unit
-test-unit: test-clean $(GO_ACC) ## Run unit tests
-	@echo Running unit tests... >&2
-	@$(GO_ACC) ./... -o $(CODE_COVERAGE_FILE_TXT)
+##@ Container
 
-.PHONY: code-cov-report
-code-cov-report: test-clean ## Generate code coverage report
-	@echo Generating code coverage report... >&2
-	@GO111MODULE=on go test -v -coverprofile=coverage.out ./...
-	@go tool cover -func=coverage.out -o $(CODE_COVERAGE_FILE_TXT)
-	@go tool cover -html=coverage.out -o $(CODE_COVERAGE_FILE_HTML)
+.PHONY: docker-build
+docker-build: ## Build the container image for the local platform (override IMAGE and TAG)
+	docker buildx build --load --build-arg VERSION=$(VERSION) -t $(IMAGE):$(TAG) .
 
-################
-# BUILD (LOCAL)#
-################
+##@ Helm
 
-CMD_DIR       := cmd
-KYVERNO_DIR   := $(CMD_DIR)/kyverno
-IMAGE_TAG_SHA := $(GIT_SHA)
-IMAGE_TAG     ?= latest
-PACKAGE       ?= github.com/nirmata/kyverno-notation-aws
-ifdef VERSION
-LD_FLAGS      := "-s -w -X $(PACKAGE)/pkg/version.BuildVersion=$(VERSION)"
-else
-LD_FLAGS      := "-s -w"
-endif
+.PHONY: helm-lint
+helm-lint: ## Lint the Helm chart
+	$(HELM) lint --strict $(CHART_DIR)
 
-build:
-	go build -o kyverno-notation-aws
+.PHONY: helm-docs
+helm-docs: ## Regenerate the chart README with helm-docs
+	cd charts && $(HELM_DOCS)
 
-#################
-# BUILD (DOCKER)#
-#################
+.PHONY: helm-template
+helm-template: ## Render the chart with several value sets and validate with kubeconform
+	$(HELM) template $(RELEASE) $(CHART_DIR) -n $(NAMESPACE) \
+		| $(KUBECONFORM) $(KUBECONFORM_FLAGS)
+	$(HELM) template $(RELEASE) $(CHART_DIR) -n $(NAMESPACE) \
+		--set replicaCount=3 --set logFormat=json --set region=eu-west-1 \
+		--set 'tokenReview.audiences={kyverno-svc.kyverno.io}' \
+		| $(KUBECONFORM) $(KUBECONFORM_FLAGS)
+	$(HELM) template $(RELEASE) $(CHART_DIR) -n $(NAMESPACE) \
+		--set crds.install=false --set tokenReview.enabled=false --set cache.enabled=false \
+		| $(KUBECONFORM) $(KUBECONFORM_FLAGS)
 
-docker-build:
-	@echo Build kyverno-notation-aws image with docker... >&2
-	docker buildx build -t $(REPO_IMAGE):$(IMAGE_TAG) -t $(REPO_IMAGE):$(GIT_SHA) . --load
+.PHONY: manifests
+manifests: ## Regenerate configs/install.yaml from the chart
+	{ printf -- '---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n' '$(NAMESPACE)'; \
+	  $(HELM) template $(RELEASE) $(CHART_DIR) -n $(NAMESPACE) --skip-tests | sed -e '/^# Source: /d'; \
+	} > $(MANIFEST)
 
-docker-publish:
-	@echo Build kyverno-notation-aws image with docker... >&2
-	docker buildx create --name multiarch --driver docker-container --use
-	docker buildx build --platform linux/amd64,linux/arm64 -t $(REPO_IMAGE):$(IMAGE_TAG) --push .
-	docker buildx rm multiarch
+##@ Local e2e (kind)
 
-t:
-	@echo $(IMAGE_TAG)
+.PHONY: kind-create
+kind-create: ## Create a kind cluster
+	$(KIND) create cluster --name $(KIND_CLUSTER) $(if $(KIND_NODE_IMAGE),--image $(KIND_NODE_IMAGE)) --wait 120s
 
-#################
-# BUILD (IMAGE) #
-#################
-image-build: $(BUILD_WITH)-build
+.PHONY: kind-load
+kind-load: docker-build ## Build the image and load it into the kind cluster
+	$(KIND) load docker-image $(IMAGE):$(TAG) --name $(KIND_CLUSTER)
 
-########
-# HELM #
-########
+.PHONY: kind-install
+kind-install: ## Install the chart into the kind cluster using the locally built image
+	$(HELM) upgrade --install $(RELEASE) $(CHART_DIR) -n $(NAMESPACE) --create-namespace --wait \
+		--kube-context kind-$(KIND_CLUSTER) \
+		--set image.registry=$(IMAGE_REGISTRY) --set image.repository=$(IMAGE_REPOSITORY) \
+		--set image.tag=$(TAG) --set image.pullPolicy=IfNotPresent
 
-.PHONY: codegen-helm-docs
-codegen-helm-docs: ## Generate helm docs
-	@echo Generate helm docs... >&2
-	@docker run -v ${PWD}/charts:/work -w /work jnorwood/helm-docs:v1.11.0 -s file
+.PHONY: kind-test
+kind-test: ## Run the chart's helm tests in the kind cluster
+	$(HELM) test $(RELEASE) -n $(NAMESPACE) --kube-context kind-$(KIND_CLUSTER)
 
-.PHONY: install-kyverno-notation-aws
-install-kyverno-notation-aws: $(HELM) ## Install kyverno notation AWS helm chart
-	@echo Install kyverno-notation-aws chart... >&2
-	@$(HELM) upgrade --install kyverno-notation-aws --namespace kyverno-notation-aws --create-namespace --wait ./charts/kyverno-notation-aws
+.PHONY: kind-e2e
+kind-e2e: kind-create kind-load kind-install kind-test ## Create cluster, load image, install chart, run helm tests
 
-.PHONY: helm-setup-openreports
-helm-setup-openreports: $(HELM) ## Add openreports helm repo and build dependencies
-	@$(HELM) repo add openreports https://openreports.github.io/reports-api
-	@$(HELM) dependency build ./charts/kyverno-notation-aws
-
-#############
-# HELM TEST #
-#############
-
-.PHONY: helm-test
-helm-test: $(HELM) ## Run Helm tests
-	@echo Running helm tests... >&2
-	@$(HELM) dependency build ./charts/kyverno-notation-aws
-	@$(HELM) test --namespace kyverno-notation-aws kyverno-notation-aws
-
-
-########
-# KIND #
-########
-
-.PHONY: kind-create-cluster
-kind-create-cluster: $(KIND) ## Create kind cluster
-	@echo Create kind cluster... >&2
-	@$(KIND) create cluster --name $(KIND_NAME) --image $(KIND_IMAGE) --config ./scripts/config/kind/$(KIND_CONFIG).yaml
-
-.PHONY: kind-delete-cluster
-kind-delete-cluster: $(KIND) ## Delete kind cluster
-	@echo Delete kind cluster... >&2
-	@$(KIND) delete cluster --name $(KIND_NAME)
-
-.PHONY: kind-load-image
-kind-load-image: $(KIND) image-build ## Build kyverno-notation-aws image and load it inside kind
-	@echo Load kyverno-notation-aws image... >&2
-	@$(KIND) load docker-image --name $(KIND_NAME) $(REPO_IMAGE):$(GIT_SHA)
-
-.PHONY: kind-deploy-image
-kind-deploy-image: $(HELM) kind-load-image ## Build image, load it inside kind cluster and deploy the helm chart
-	@$(MAKE) kind-install-image
-
-.PHONY: kind-install-image
-kind-install-image: $(HELM) helm-setup-openreports ## Install helm-chart
-	@echo Installing kyverno-notation-aws helm chart
-	@$(HELM) upgrade --install kyverno-notation-aws --namespace kyverno-notation-aws --create-namespace --wait ./charts/kyverno-notation-aws
-
-
-###########
-# CODEGEN #
-###########
-.PHONY: codegen-manifest-release
-codegen-manifest-release: ## Create release manifest
-codegen-manifest-release: $(HELM)
-codegen-manifest-release:
-	@echo Generate release manifest... >&2
-	@mkdir -p ./.manifest
-	@$(HELM) template kyverno-notation-aws --kube-version $(KUBE_VERSION) --namespace kyverno-notation-aws --skip-tests ./charts/kyverno-notation-aws \
-		--set image.tag=$(VERSION) \
- 		| $(SED) -e '/^#.*/d' \
-		> ./.manifest/release.yaml
+.PHONY: kind-delete
+kind-delete: ## Delete the kind cluster
+	$(KIND) delete cluster --name $(KIND_CLUSTER)

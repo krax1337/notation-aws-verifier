@@ -1,124 +1,252 @@
-# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
-name: releaser
-
-permissions: {}
+name: release
 
 on:
   push:
     tags:
-      - "v*"
+      - "v*.*.*"
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  IMAGE_NAME: ghcr.io/krax1337/notation-aws-verifier
+  CHART_NAME: notation-aws-verifier
+  CHART_DIR: charts/notation-aws-verifier
+  CHART_REGISTRY: ghcr.io/krax1337/charts
 
 jobs:
-  publish-images:
+  verify:
+    name: verify
+    if: github.repository == 'krax1337/notation-aws-verifier'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
-      packages: write
-      id-token: write
+      contents: read
     outputs:
-      image-digest: ${{ steps.publish-kyverno-notation-aws.outputs.digest }}
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - name: Setup build env
-        uses: ./.github/actions/setup-build-env
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          build-cache-key: publish-images
-      - name: Login to Docker Hub
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Run Trivy vulnerability scanner in repo mode
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: "fs"
-          ignore-unfixed: true
-          format: "sarif"
-          output: "trivy-results.sarif"
-          severity: "CRITICAL,HIGH"
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
-      - name: Publish image
-        id: publish-kyverno-notation-aws
-        uses: ./.github/actions/publish-image
-        with:
-          makefile-target: docker-publish
-          registry: ghcr.io
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository_owner }}
-          version: ${{ github.ref_name }}
-          sign-image: true
-          sbom-name: kyverno-notation-aws
-          sbom-repository: ghcr.io/${{ github.repository }}/sbom
-          signature-repository: ghcr.io/${{ github.repository }}/signatures
-          main-path: ./
-          image-tag: ${{ github.ref_name }}
+          persist-credentials: false
+      - name: Check tag against Chart.yaml
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not a semantic version (vX.Y.Z or vX.Y.Z-pre)."
+            exit 1
+          fi
+          version="${TAG#v}"
+          app_version="$(yq '.appVersion' "$CHART_DIR/Chart.yaml")"
+          chart_version="$(yq '.version' "$CHART_DIR/Chart.yaml")"
+          failed=0
+          if [[ "$app_version" != "$TAG" ]]; then
+            echo "::error file=$CHART_DIR/Chart.yaml::appVersion is '$app_version', expected '$TAG'."
+            failed=1
+          fi
+          if [[ "$chart_version" != "$version" ]]; then
+            echo "::error file=$CHART_DIR/Chart.yaml::version is '$chart_version', expected '$version'."
+            failed=1
+          fi
+          if [[ "$failed" -ne 0 ]]; then
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  generate-kyverno-notation-aws-provenance:
-    needs: publish-images
-    permissions:
-      id-token: write # To sign the provenance.
-      packages: write # To upload assets to release.
-      actions: read # To read the workflow path.
-    # NOTE: The container generator workflow is not officially released as GA.
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
-    with:
-      image: ghcr.io/${{ github.repository_owner }}/kyverno-notation-aws
-      digest: "${{ needs.publish-images.outputs.image-digest }}"
-      registry-username: ${{ github.actor }}
-    secrets:
-      registry-password: ${{ secrets.GITHUB_TOKEN }}
-
-  create-release:
+  goreleaser:
+    name: goreleaser
+    needs: verify
     runs-on: ubuntu-latest
-    needs: publish-images
+    timeout-minutes: 30
     permissions:
-      contents: write
-      id-token: write
+      contents: write # create the GitHub release
+      id-token: write # keyless signing of the provenance attestation
+      attestations: write # store the provenance attestation
     steps:
-      - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: creekorful/goreportcard-action@1f35ced8cdac2cba28c9a2f2288a16aacfd507f9 # v1.0
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
-      - name: Install Syft
-        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          version: '~> v2'
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.18.2
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attest binaries
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
 
-
-  push-install-manifest:
+  image:
+    name: image
+    needs: verify
     runs-on: ubuntu-latest
-    needs: create-release
+    timeout-minutes: 60
     permissions:
-      contents: write # needed to write releases
-      id-token: write # needed for keyless signing
-      packages: write # needed for ghcr access
+      contents: read
+      packages: write # push the image and its signature
+      id-token: write # keyless signing
+      attestations: write # store the provenance attestation
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - name: Setup build env
-        uses: ./.github/actions/setup-build-env
-        timeout-minutes: 10
-      - name: Setup Flux CLI
-        uses: fluxcd/flux2/action@8454b02a32e48d775b9f563cb51fdcb1787b5b93 # v2.7.5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          version: 0.35.0
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@fb28c2b6339dcd94da6e4cbcbc5e888961f6f8c3 # v3.9.0
-      - name: Build yaml manifest
-        run: VERSION=${{ github.ref_name }} make codegen-manifest-release
-      - name: Upload install manifest
-        uses: svenstaro/upload-release-action@6b7fa9f267e90b50a19fef07b3596790bb941741 # 2.11.3
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: .manifest/release.yaml
-          asset_name: install.yaml
-          tag: ${{ github.ref }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{raw}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=notation-aws-verifier
+            org.opencontainers.image.description=Kyverno extension service that verifies Notation signatures made with AWS Signer
+          annotations: |
+            org.opencontainers.image.title=notation-aws-verifier
+            org.opencontainers.image.description=Kyverno extension service that verifies Notation signatures made with AWS Signer
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          build-args: VERSION=${{ github.ref_name }}
+          provenance: mode=max
+          sbom: true
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: Sign image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_NAME}@${DIGEST}"
+      - name: Attest image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  image-scan:
+    name: image-scan
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read # pull the image while the package is still private
+      security-events: write # upload SARIF to code scanning
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.74.0
+          scan-type: image
+          image-ref: ${{ env.IMAGE_NAME }}@${{ needs.image.outputs.digest }}
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+          exit-code: "0"
+          format: sarif
+          output: trivy-image.sarif
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+  chart:
+    name: chart
+    needs:
+      - verify
+      - goreleaser
+      - image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # upload release assets
+      packages: write # push the chart and its signature
+      id-token: write # keyless signing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.0
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Package chart
+        run: helm package "$CHART_DIR" --destination .chart-dist
+      - name: Push chart
+        id: push
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$REGISTRY_PASSWORD" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          helm push ".chart-dist/${CHART_NAME}-${VERSION}.tgz" "oci://${CHART_REGISTRY}" 2>&1 | tee .chart-dist/push.log
+          digest="$(awk '/^Digest:/ {print $2}' .chart-dist/push.log)"
+          if [[ "$digest" != sha256:* ]]; then
+            echo "::error::Could not read the chart digest from 'helm push' output."
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Sign chart
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "${CHART_REGISTRY}/${CHART_NAME}@${DIGEST}"
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            ".chart-dist/${CHART_NAME}-${VERSION}.tgz" \
+            configs/install.yaml \
+            --repo "$GITHUB_REPOSITORY" --clobber
