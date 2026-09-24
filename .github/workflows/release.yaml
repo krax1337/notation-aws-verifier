@@ -185,6 +185,7 @@ jobs:
           image-ref: ${{ env.IMAGE_NAME }}@${{ needs.image.outputs.digest }}
           severity: CRITICAL,HIGH,MEDIUM
           ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
           exit-code: "0"
           format: sarif
           output: trivy-image.sarif

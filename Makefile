@@ -58,6 +58,10 @@ lint: ## Run golangci-lint
 vet: ## Run go vet
 	go vet ./...
 
+.PHONY: vulncheck
+vulncheck: ## Run govulncheck (fails on reachable vulns not in .govulncheck-ignore)
+	hack/govulncheck.sh
+
 .PHONY: fmt
 fmt: ## Format Go code
 	go fmt ./...

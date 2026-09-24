@@ -1,0 +1,8 @@
+# Findings Trivy should not fail on. Each entry needs a statement and an expiry.
+vulnerabilities:
+  - id: CVE-2026-84445
+    statement: >-
+      gRPC-Go server-side DoS. grpc is an indirect dependency (via google.golang.org/api)
+      and this binary runs no gRPC server; govulncheck finds no reachable symbol. The fix
+      exists only in a 1.85.0 dev build; drop this entry when grpc 1.85.0 is released.
+    expired_at: 2026-12-31
