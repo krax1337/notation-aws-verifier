@@ -1,0 +1,49 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ template "notation-aws-verifier.roleName" . }}
+  namespace: {{ template "notation-aws-verifier.namespace" . }}
+  labels:
+    {{- include "notation-aws-verifier.labels" . | nindent 4 }}
+rules:
+  # Self-signed CA and TLS pair secrets (created, rotated and served by the service),
+  # plus registry credentials referenced by --imagePullSecrets.
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+  # Notation plugin configuration (--pluginConfigMap).
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+  # Leader election for certificate rotation.
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+  - apiGroups:
+      - ""
+      - events.k8s.io
+    resources:
+      - events
+    verbs:
+      - create
+      - patch

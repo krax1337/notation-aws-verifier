@@ -8,9 +8,9 @@ metadata:
 spec:
   containers:
   - name: myapp-container
-    image: 844333597536.dkr.ecr.us-west-2.amazonaws.com/kyverno-demo:v1
+    image: 123456789012.dkr.ecr.us-west-2.amazonaws.com/notation-demo:v1
   initContainers:
   - name: init-myservice
-    image: busybox:1.28
+    image: busybox:1.38.0
   - name: init-mydb
-    image: busybox:1.28
+    image: busybox:1.38.0

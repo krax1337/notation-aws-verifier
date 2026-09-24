@@ -1,0 +1,298 @@
+# -- AWS region, exported to the container as `AWS_REGION`.
+# Used for ECR credential lookups and, unless `configMap.data.aws-region` is set, by the AWS Signer
+# plugin when checking signing profile revocation. Set it to the region of your registry and signing profiles.
+region: us-west-2
+
+# -- (string) Override the name of the chart
+nameOverride: ~
+
+# -- (string) Override the expanded name of the chart (used for the Deployment, ServiceAccount, RBAC and Service names)
+fullnameOverride: ~
+
+# -- (string) Override the namespace the chart deploys to
+namespaceOverride: ~
+
+image:
+  # -- Image registry
+  registry: ghcr.io
+  # -- Image repository
+  repository: krax1337/notation-aws-verifier
+  # -- (string) Image tag. Defaults to `appVersion` in Chart.yaml if omitted
+  tag: ~
+  # -- (string) Image digest (e.g. `sha256:...`). Takes precedence over `image.tag` when set
+  digest: ~
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- Names of existing Secrets used to pull the verifier image itself (pod `imagePullSecrets`).
+  # Not to be confused with `deployment.imagePullSecrets`, which are the registry credentials used during verification.
+  pullSecrets: []
+
+# CRDs configuration
+crds:
+  # -- Whether to have Helm install the TrustPolicy and TrustStore CRDs (API group `notation.nirmata.io`)
+  install: true
+
+# -- Number of replicas. Every replica serves requests and keeps its own copy of the trust policies;
+# certificate rotation runs on a single elected leader. Use 2 or more for high availability.
+replicaCount: 1
+
+# -- Number of old ReplicaSets to retain for rollback
+revisionHistoryLimit: 10
+
+# -- Seconds the pod is given to shut down gracefully
+terminationGracePeriodSeconds: 10
+
+# -- Log level passed as `--logLevel`. One of `trace`, `debug`, `info`, `warn`, `error`
+logLevel: info
+
+# -- Log format passed as `--logFormat`. One of `text`, `json`
+logFormat: text
+
+# -- Name of the TrustPolicy used when a request does not specify one (`DEFAULT_TRUST_POLICY`)
+defaultTrustPolicy: aws-signer-trust-policy
+
+# Verified image cache configuration
+cache:
+  # -- Cache successful verification results (`--cacheEnabled`)
+  enabled: true
+  # -- Maximum number of cached entries (`--cacheMaxSize`)
+  maxSize: 2000
+  # -- Time-to-live of a cache entry in seconds (`--cacheTTLDurationSeconds`)
+  ttlSeconds: 7200
+
+# Request authentication configuration
+tokenReview:
+  # -- Validate the bearer token of each request with a TokenReview and only accept `allowedUsers` (`--reviewKyvernoToken`).
+  # When enabled the ServiceAccount is granted `create` on `tokenreviews`.
+  enabled: true
+  # -- Users and ServiceAccounts allowed to call the service (`--allowedUsers`)
+  allowedUsers:
+    - system:serviceaccount:kyverno:kyverno-admission-controller
+    - system:serviceaccount:kyverno:kyverno-reports-controller
+  # -- Audiences put in the TokenReview (`--tokenReviewAudiences`). Empty uses the API server default audience.
+  # Set e.g. `kyverno-svc.kyverno.io` if Kyverno mints request tokens for a specific audience.
+  audiences: []
+
+# Deployment configuration
+deployment:
+  # -- Deployment update strategy.
+  # Ref: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy
+  # @default -- See [values.yaml](values.yaml)
+  updateStrategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+
+  # -- Registry credentials used while verifying images, for registries IAM does not cover.
+  # A `kubernetes.io/dockerconfigjson` Secret is created for each entry and the names are passed as `--imagePullSecrets`.
+  # ECR registries are accessed with the pod's AWS identity and need no entry here.
+  imagePullSecrets: {}
+  # regcred:
+  #   registry: foo.example.com
+  #   username: foobar
+  #   password: secret
+
+  # -- Allow insecure connections to registries (`--allowInsecureRegistry`). Not recommended.
+  allowInsecureRegistry: false
+
+  # -- Maximum number of signature envelopes processed per image (`--maxSignatureAttempts`)
+  maxSignatureAttempts: 30
+
+# -- Additional command-line arguments for the container
+extraArgs: []
+# - --someFlag=value
+
+# -- Additional environment variables for the container
+extraEnv: []
+# - name: AWS_STS_REGIONAL_ENDPOINTS
+#   value: regional
+
+# -- Container resource requests and limits
+# @default -- See [values.yaml](values.yaml)
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    memory: 512Mi
+
+# Service account configuration
+serviceAccount:
+  # -- Create a ServiceAccount. When `false`, `serviceAccount.name` (or `default`) must already exist
+  enabled: true
+  # -- (string) The ServiceAccount name. Defaults to the chart fullname
+  name: ~
+  # -- Annotations for the ServiceAccount.
+  # For IRSA set `eks.amazonaws.com/role-arn`. EKS Pod Identity needs no annotation: create a Pod Identity
+  # association for this ServiceAccount in AWS instead. The role needs `signer:GetRevocationStatus` and
+  # ECR read access (`ecr:GetAuthorizationToken`, `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`).
+  annotations: {}
+  # eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/notation-aws-verifier
+
+# Notation plugin configuration
+configMap:
+  # -- Name of the ConfigMap whose data is passed to the AWS Signer plugin as plugin config (`--pluginConfigMap`)
+  name: notation-plugin-config
+  # -- Plugin config entries. Supported keys: `aws-region`, `aws-profile`, `aws-signer-endpoint-url`
+  data: {}
+  # aws-region: us-west-2
+
+# Service configuration
+service:
+  # -- Service type
+  type: ClusterIP
+  # -- HTTPS port served by the Service (targets container port 9443)
+  port: 443
+  # -- Service annotations
+  annotations: {}
+
+# -- Annotations added to the pod
+podAnnotations: {}
+
+# -- Labels added to the pod
+podLabels: {}
+
+# -- User supplied labels applied to all resources (not to selectors)
+customLabels: {}
+
+# -- Pod priority class name
+priorityClassName: ""
+
+# -- Pod security context
+# @default -- See [values.yaml](values.yaml)
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container security context. The root filesystem is read-only; `/notation` and `/tmp` are writable emptyDir volumes.
+# @default -- See [values.yaml](values.yaml)
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  privileged: false
+  seccompProfile:
+    type: RuntimeDefault
+  capabilities:
+    drop:
+      - ALL
+
+# PodDisruptionBudget configuration
+podDisruptionBudget:
+  # -- Create a PodDisruptionBudget. One is always created when `replicaCount` is greater than 1
+  enabled: false
+  # -- Minimum available pods. Ignored when `maxUnavailable` is set
+  minAvailable: 1
+  # -- (int or string) Maximum unavailable pods. Takes precedence over `minAvailable`
+  maxUnavailable: ~
+
+# -- Node selector.
+# Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#nodeselector
+nodeSelector: {}
+
+# -- Tolerations.
+# Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/
+tolerations: []
+
+# -- Affinity rules.
+# Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#affinity-and-anti-affinity
+affinity: {}
+# To spread replicas across nodes:
+#   podAntiAffinity:
+#     preferredDuringSchedulingIgnoredDuringExecution:
+#       - weight: 100
+#         podAffinityTerm:
+#           topologyKey: kubernetes.io/hostname
+#           labelSelector:
+#             matchLabels:
+#               app.kubernetes.io/name: notation-aws-verifier
+#               app.kubernetes.io/instance: notation-aws-verifier
+
+# -- Topology spread constraints. `labelSelector` defaults to the pod selector labels when omitted.
+# Ref: https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/
+topologySpreadConstraints: []
+# - maxSkew: 1
+#   topologyKey: topology.kubernetes.io/zone
+#   whenUnsatisfiable: ScheduleAnyway
+
+# -- Startup probe, forwarded as-is to the container.
+# Ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-probes/
+# @default -- See [values.yaml](values.yaml)
+startupProbe:
+  httpGet:
+    path: /readyz
+    port: probes
+    scheme: HTTP
+  failureThreshold: 20
+  initialDelaySeconds: 2
+  periodSeconds: 6
+
+# -- Liveness probe, forwarded as-is to the container.
+# Ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-probes/
+# @default -- See [values.yaml](values.yaml)
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: probes
+    scheme: HTTP
+  periodSeconds: 20
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+# -- Readiness probe, forwarded as-is to the container.
+# Ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-probes/
+# @default -- See [values.yaml](values.yaml)
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: probes
+    scheme: HTTP
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+  successThreshold: 1
+
+# Helm test configuration (`helm test`)
+test:
+  # -- Seconds to wait before probing the service
+  sleep: 20
+
+  image:
+    # -- (string) Image registry
+    registry: ~
+    # -- Image repository
+    repository: busybox
+    # -- Image tag
+    tag: "1.38.0"
+    # -- (string) Image pull policy. Defaults to `image.pullPolicy` if omitted
+    pullPolicy: ~
+
+  # -- Test pod resources
+  # @default -- See [values.yaml](values.yaml)
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 16Mi
+
+  # -- Test container security context
+  # @default -- See [values.yaml](values.yaml)
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop:
+        - ALL

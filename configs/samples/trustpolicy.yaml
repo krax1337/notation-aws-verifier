@@ -8,14 +8,14 @@ spec:
   trustPolicies:
   - name: aws-signer-tp
     registryScopes:
-    - "844333597536.dkr.ecr.us-west-2.amazonaws.com/kyverno-demo"
+    - "123456789012.dkr.ecr.us-west-2.amazonaws.com/notation-demo"
     signatureVerification:
       level: strict
       override: {}
     trustStores:
     - signingAuthority:aws-signer-ts
     trustedIdentities:
-    - "arn:aws:signer:us-west-2:844333597536:/signing-profiles/kyvernodemo"
+    - "arn:aws:signer:us-west-2:123456789012:/signing-profiles/notationdemo"
 ---
 apiVersion: notation.nirmata.io/v1alpha1
 kind: TrustPolicy
@@ -34,4 +34,4 @@ spec:
     trustStores:
     - signingAuthority:aws-signer-ts-fail
     trustedIdentities:
-    - "arn:aws:signer:us-west-2:844333597536:/signing-profiles/kyvernodemo"
+    - "arn:aws:signer:us-west-2:123456789012:/signing-profiles/notationdemo"

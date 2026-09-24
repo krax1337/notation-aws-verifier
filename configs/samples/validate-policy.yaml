@@ -1,7 +1,7 @@
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: validate-images     
+  name: validate-images
 spec:
   validationFailureAction: Enforce
   failurePolicy: Fail
@@ -22,7 +22,7 @@ spec:
     context:
     - name: tlscerts
       apiCall:
-        urlPath: "/api/v1/namespaces/kyverno-notation-aws/secrets/svc.kyverno-notation-aws.svc.tls-pair"
+        urlPath: "/api/v1/namespaces/notation-aws-verifier/secrets/notation-aws-verifier-svc.notation-aws-verifier.svc.tls-pair"
         jmesPath: "base64_decode( data.\"tls.crt\" )"
     - name: response
       apiCall:
@@ -31,14 +31,14 @@ spec:
         - key: images
           value: "{{images}}"
         - key: imageReferences
-          value: 
-          - "844333597536.dkr.ecr.us-west-2.amazonaws.com*"
+          value:
+          - "123456789012.dkr.ecr.us-west-2.amazonaws.com*"
         - key: trustPolicy
           value: "tp-{{request.namespace}}"
         - key: attestations
-          value: 
+          value:
           - imageReference: "*"
-            type: 
+            type:
             - name: sbom/example
               conditions:
                 all:
@@ -47,7 +47,7 @@ spec:
                   value: "3.17"
                   message: invalid license version
         service:
-          url: https://svc.kyverno-notation-aws/checkimages
+          url: https://notation-aws-verifier-svc.notation-aws-verifier.svc/checkimages
           caBundle: '{{ tlscerts }}'
     validate:
       message: "{{ response.message }}"

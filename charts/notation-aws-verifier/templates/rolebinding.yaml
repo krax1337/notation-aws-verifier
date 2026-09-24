@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ template "notation-aws-verifier.roleName" . }}binding
+  namespace: {{ template "notation-aws-verifier.namespace" . }}
+  labels:
+    {{- include "notation-aws-verifier.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ template "notation-aws-verifier.roleName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ template "notation-aws-verifier.serviceAccountName" . }}
+    namespace: {{ template "notation-aws-verifier.namespace" . }}

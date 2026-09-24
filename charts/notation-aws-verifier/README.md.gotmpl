@@ -1,0 +1,49 @@
+{{ template "chart.header" . }}
+
+{{ template "chart.badgesSection" . }}
+
+{{ template "chart.description" . }}
+
+{{ template "chart.homepageLine" . }}
+
+## Installation
+
+```sh
+helm install notation-aws-verifier oci://ghcr.io/krax1337/charts/notation-aws-verifier \
+  --version {{ template "chart.version" . }} \
+  -n notation-aws-verifier --create-namespace
+```
+
+The chart installs the TrustPolicy and TrustStore CRDs (API group `notation.nirmata.io`) unless `crds.install=false`.
+
+## AWS credentials
+
+The service needs an AWS identity with `signer:GetRevocationStatus` and ECR read access
+(`ecr:GetAuthorizationToken`, `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`).
+
+- **IRSA**: set `serviceAccount.annotations."eks\.amazonaws\.com/role-arn"`.
+- **EKS Pod Identity**: no annotation needed; create a Pod Identity association for the
+  `notation-aws-verifier` ServiceAccount in the release namespace.
+
+Set `region` to the region of your registry and signing profiles.
+
+## Calling the service from Kyverno
+
+The service generates a self-signed certificate stored in the Secret
+`<service>.<namespace>.svc.tls-pair`. With the default release name and namespace:
+
+- service URL: `https://notation-aws-verifier-svc.notation-aws-verifier.svc/checkimages`
+- CA bundle: `/api/v1/namespaces/notation-aws-verifier/secrets/notation-aws-verifier-svc.notation-aws-verifier.svc.tls-pair`, key `tls.crt`
+
+Only requests carrying a token of a user in `tokenReview.allowedUsers` are accepted while `tokenReview.enabled` is true.
+If Kyverno mints request tokens for a specific audience, list it in `tokenReview.audiences`.
+
+## High availability
+
+Set `replicaCount` to 2 or more. Every replica serves requests; certificate rotation runs on an elected leader.
+A PodDisruptionBudget is created automatically when `replicaCount` is greater than 1.
+Spread replicas with `topologySpreadConstraints` or `affinity` (see the commented example in [values.yaml](values.yaml)).
+
+{{ template "chart.requirementsSection" . }}
+
+{{ template "chart.valuesSection" . }}

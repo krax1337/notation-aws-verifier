@@ -1,0 +1,155 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "notation-aws-verifier.fullname" . }}
+  namespace: {{ template "notation-aws-verifier.namespace" . }}
+  labels:
+    {{- include "notation-aws-verifier.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  {{- with .Values.deployment.updateStrategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "notation-aws-verifier.matchLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "notation-aws-verifier.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ template "notation-aws-verifier.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: notation-aws-verifier
+          image: {{ include "notation-aws-verifier.image" (dict "image" .Values.image "defaultTag" .Chart.AppVersion) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --logLevel={{ .Values.logLevel }}
+            - --logFormat={{ .Values.logFormat }}
+            - --cacheEnabled={{ .Values.cache.enabled }}
+            - --cacheMaxSize={{ int64 .Values.cache.maxSize }}
+            - --cacheTTLDurationSeconds={{ int64 .Values.cache.ttlSeconds }}
+            - --reviewKyvernoToken={{ .Values.tokenReview.enabled }}
+            {{- if .Values.tokenReview.enabled }}
+            - --allowedUsers={{ required "tokenReview.allowedUsers must not be empty when tokenReview.enabled is true" (join "," (default list .Values.tokenReview.allowedUsers)) }}
+            {{- end }}
+            {{- with .Values.tokenReview.audiences }}
+            - --tokenReviewAudiences={{ join "," . }}
+            {{- end }}
+            - --pluginConfigMap={{ template "notation-aws-verifier.configMap" . }}
+            - --allowInsecureRegistry={{ .Values.deployment.allowInsecureRegistry }}
+            - --maxSignatureAttempts={{ .Values.deployment.maxSignatureAttempts }}
+            {{- with .Values.deployment.imagePullSecrets }}
+            - --imagePullSecrets={{ keys . | sortAlpha | join "," }}
+            {{- end }}
+            {{- with .Values.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: https
+              containerPort: 9443
+              protocol: TCP
+            - name: http
+              containerPort: 9080
+              protocol: TCP
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            - name: probes
+              containerPort: 8081
+              protocol: TCP
+          env:
+            - name: NOTATION_DIR
+              value: /notation
+            - name: AWS_ECR_CACHE_DIR
+              value: /tmp/.ecr
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SERVICE_NAME
+              value: {{ template "notation-aws-verifier.serviceName" . }}
+            - name: DEPLOYMENT_NAME
+              value: {{ template "notation-aws-verifier.fullname" . }}
+            - name: AWS_REGION
+              value: {{ .Values.region | quote }}
+            - name: DEFAULT_TRUST_POLICY
+              value: {{ .Values.defaultTrustPolicy | quote }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.startupProbe }}
+          startupProbe:
+            {{- tpl (toYaml .) $ | nindent 12 }}
+          {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- tpl (toYaml .) $ | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- tpl (toYaml .) $ | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: notation
+              mountPath: /notation
+            - name: tmp
+              mountPath: /tmp
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- range . }}
+        - {{ toYaml (merge (deepCopy .) (dict "labelSelector" (dict "matchLabels" (include "notation-aws-verifier.matchLabels" $ | fromYaml)))) | nindent 10 | trim }}
+        {{- end }}
+      {{- end }}
+      volumes:
+        - name: notation
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

@@ -2,237 +2,521 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: kyverno-notation-aws
+  name: notation-aws-verifier
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: kyverno-notation-aws
-  namespace: kyverno-notation-aws
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::844333597536:role/kyverno-notation-aws
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: kyverno-notation-aws-clusterrole
-rules:
-- apiGroups:
-  - notation.nirmata.io
-  resources:
-  - trustpolicies
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - notation.nirmata.io
-  resources:
-  - trustpolicies/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - notation.nirmata.io
-  resources:
-  - truststores
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - notation.nirmata.io
-  resources:
-  - truststores/finalizers
-  verbs:
-  - update
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: kyverno-notation-aws-clusterrolebinding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: kyverno-notation-aws-clusterrole
-subjects:
-- kind: ServiceAccount
-  name: kyverno-notation-aws
-  namespace: kyverno-notation-aws
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: kyverno-notation-aws-token-review-clusterrolebinding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: system:auth-delegator
-subjects:
-- kind: ServiceAccount
-  name: kyverno-notation-aws
-  namespace: kyverno-notation-aws
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: kyverno-notation-aws-role
-  namespace: kyverno-notation-aws
-rules:
-- apiGroups:
-  - ""
-  resources:
-  - "secrets"
-  - "configmaps"
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - delete
-- apiGroups:
-  - coordination.k8s.io
-  resources:
-  - leases
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - delete
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: kyverno-notation-aws-rolebinding
-  namespace: kyverno-notation-aws
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: kyverno-notation-aws-role
-subjects:
-- kind: ServiceAccount
-  name: kyverno-notation-aws
-  namespace: kyverno-notation-aws
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
+  name: notation-aws-verifier
+  namespace: notation-aws-verifier
   labels:
-    app: kyverno-notation-aws
-  name: kyverno-notation-aws
-  namespace: kyverno-notation-aws
-spec:
-  progressDeadlineSeconds: 600
-  replicas: 1
-  revisionHistoryLimit: 10
-  selector:
-    matchLabels:
-      app: kyverno-notation-aws
-  strategy:
-    rollingUpdate:
-      maxSurge: 25%
-      maxUnavailable: 25%
-    type: RollingUpdate
-  template:
-    metadata:
-      labels:
-        app: kyverno-notation-aws
-    spec:
-      terminationGracePeriodSeconds: 5
-      securityContext:
-        runAsNonRoot: true
-      containers:
-      - image: ghcr.io/nirmata/kyverno-notation-aws:latest
-        imagePullPolicy: Always
-        name: kyverno-notation-aws
-        args:
-        # NOTATION DEBUGGING
-        - --debug
+    app.kubernetes.io/instance: notation-aws-verifier
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: notation-aws-verifier
+    app.kubernetes.io/part-of: notation-aws-verifier
+    app.kubernetes.io/version: v1.0.0
+    helm.sh/chart: notation-aws-verifier-1.0.0
 
-        # CACHING
-        - --cacheEnabled
-        - --cacheMaxSize=2000
-        - --cacheTTLDurationSeconds=7200
-
-        # USE IF IRSA IS NOT CONFIGURED
-        # - --imagePullSecrets=regcred
-        resources:
-          limits:
-            memory: 512Mi
-          requests:
-            memory: 32Mi
-            cpu: 100m
-        securityContext:
-          runAsUser: 2000
-          runAsGroup: 3000
-          allowPrivilegeEscalation: false
-          seccompProfile:
-            type: RuntimeDefault
-          capabilities:
-            drop:
-              - ALL
-        env:
-        - name: NOTATION_DIR
-          value: /notation
-        - name: POD_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace  
-        - name: SERVICE_NAME
-          value: svc
-        - name: DEPLOYMENT_NAME
-          value: kyverno-notation-aws
-        - name: POD_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.name
-        # USE IF IRSA IS NOT CONFIGURED
-        # - name: AWS_ACCESS_KEY_ID
-        #   value: ${AWS_ACCESS_KEY_ID}
-        # - name: AWS_SECRET_ACCESS_KEY
-        #   value: ${AWS_SECRET_ACCESS_KEY}
-        - name: AWS_REGION
-          value: us-west-2
-        - name: DEFAULT_TRUST_POLICY
-          value: aws-signer-trust-policy
-        volumeMounts:
-          - name: notation
-            mountPath: /notation
-      volumes:
-        - name: notation
-          emptyDir: {}
-      serviceAccountName: kyverno-notation-aws
----
-apiVersion: v1
-kind: Service
-metadata:
-  labels:
-    app: kyverno-notation-aws
-  name: svc
-  namespace: kyverno-notation-aws
-spec:
-  ports:
-  - port: 443
-    name: https
-    protocol: TCP
-    targetPort: 9443
-  selector:
-    app: kyverno-notation-aws
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: notation-plugin-config
-  namespace: kyverno-notation-aws
-data:
-  debug: "false"
+  namespace: notation-aws-verifier
+  labels:
+    app.kubernetes.io/instance: notation-aws-verifier
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: notation-aws-verifier
+    app.kubernetes.io/part-of: notation-aws-verifier
+    app.kubernetes.io/version: v1.0.0
+    helm.sh/chart: notation-aws-verifier-1.0.0
+
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.11.1
+    helm.sh/resource-policy: keep
+  creationTimestamp: null
+  name: trustpolicies.notation.nirmata.io
+spec:
+  group: notation.nirmata.io
+  names:
+    kind: TrustPolicy
+    listKind: TrustPolicyList
+    plural: trustpolicies
+    singular: trustpolicy
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: 'TrustPolicy defines a Notary trust policy document as specified
+          here: https://notaryproject.dev/docs/concepts/trust-store-trust-policy-specification/#trust-policy'
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec contains the desired trust policy
+            properties:
+              trustPolicies:
+                description: TrustPolicies include each policy statement
+                items:
+                  description: TrustPolicyStatement represents a policy statement
+                    in the policy document
+                  properties:
+                    name:
+                      description: Name of the policy statement
+                      type: string
+                    registryScopes:
+                      description: RegistryScopes that this policy statement affects
+                      items:
+                        type: string
+                      type: array
+                    signatureVerification:
+                      description: SignatureVerification setting for this policy statement
+                      properties:
+                        level:
+                          description: VerificationLevel specifies the desired signature
+                            verification level
+                          enum:
+                          - strict
+                          - permissive
+                          - audit
+                          - skip
+                          type: string
+                        override:
+                          additionalProperties:
+                            enum:
+                            - enforce
+                            - log
+                            - skip
+                            type: string
+                          description: Override is an optional map of verification
+                            overrides
+                          type: object
+                      required:
+                      - level
+                      type: object
+                    trustStores:
+                      description: TrustStores this policy statement uses
+                      items:
+                        type: string
+                      type: array
+                    trustedIdentities:
+                      description: TrustedIdentities this policy statement pins
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - name
+                  - registryScopes
+                  - signatureVerification
+                  type: object
+                type: array
+              trustPolicyName:
+                description: Name is the name for the trust store file
+                type: string
+              version:
+                description: Version of the policy document
+                enum:
+                - "1.0"
+                type: string
+            required:
+            - trustPolicies
+            - trustPolicyName
+            - version
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.11.1
+    helm.sh/resource-policy: keep
+  creationTimestamp: null
+  name: truststores.notation.nirmata.io
+spec:
+  group: notation.nirmata.io
+  names:
+    kind: TrustStore
+    listKind: TrustStoreList
+    plural: truststores
+    singular: truststore
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: TrustStore is the Schema for the truststores API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: TrustStoreSpec defines the desired state of TrustStore
+            properties:
+              caBundle:
+                description: CA Bundle is the PEM encoded certificate chain used to
+                  verify the signed data.
+                type: string
+              trustStoreName:
+                description: Name is the name for the trust store file
+                type: string
+              type:
+                description: Type is the type of trust store. The allowed types are
+                  `ca` and `signingAuthority`.
+                enum:
+                - ca
+                - signingAuthority
+                type: string
+            required:
+            - caBundle
+            - trustStoreName
+            - type
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: notation-aws-verifier-clusterrole
+  labels:
+    app.kubernetes.io/instance: notation-aws-verifier
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: notation-aws-verifier
+    app.kubernetes.io/part-of: notation-aws-verifier
+    app.kubernetes.io/version: v1.0.0
+    helm.sh/chart: notation-aws-verifier-1.0.0
+rules:
+  # TrustPolicy/TrustStore reconcilers: watch the CRs and add/remove their finalizer.
+  - apiGroups:
+      - notation.nirmata.io
+    resources:
+      - trustpolicies
+      - truststores
+    verbs:
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - notation.nirmata.io
+    resources:
+      - trustpolicies/finalizers
+      - truststores/finalizers
+    verbs:
+      - update
+  # Authenticate callers (--reviewKyvernoToken).
+  - apiGroups:
+      - authentication.k8s.io
+    resources:
+      - tokenreviews
+    verbs:
+      - create
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: notation-aws-verifier-clusterrolebinding
+  labels:
+    app.kubernetes.io/instance: notation-aws-verifier
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: notation-aws-verifier
+    app.kubernetes.io/part-of: notation-aws-verifier
+    app.kubernetes.io/version: v1.0.0
+    helm.sh/chart: notation-aws-verifier-1.0.0
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: notation-aws-verifier-clusterrole
+subjects:
+  - kind: ServiceAccount
+    name: notation-aws-verifier
+    namespace: notation-aws-verifier
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: notation-aws-verifier-role
+  namespace: notation-aws-verifier
+  labels:
+    app.kubernetes.io/instance: notation-aws-verifier
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: notation-aws-verifier
+    app.kubernetes.io/part-of: notation-aws-verifier
+    app.kubernetes.io/version: v1.0.0
+    helm.sh/chart: notation-aws-verifier-1.0.0
+rules:
+  # Self-signed CA and TLS pair secrets (created, rotated and served by the service),
+  # plus registry credentials referenced by --imagePullSecrets.
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+  # Notation plugin configuration (--pluginConfigMap).
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+  # Leader election for certificate rotation.
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+  - apiGroups:
+      - ""
+      - events.k8s.io
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: notation-aws-verifier-rolebinding
+  namespace: notation-aws-verifier
+  labels:
+    app.kubernetes.io/instance: notation-aws-verifier
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: notation-aws-verifier
+    app.kubernetes.io/part-of: notation-aws-verifier
+    app.kubernetes.io/version: v1.0.0
+    helm.sh/chart: notation-aws-verifier-1.0.0
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: notation-aws-verifier-role
+subjects:
+  - kind: ServiceAccount
+    name: notation-aws-verifier
+    namespace: notation-aws-verifier
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notation-aws-verifier-svc
+  namespace: notation-aws-verifier
+  labels:
+    app.kubernetes.io/instance: notation-aws-verifier
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: notation-aws-verifier
+    app.kubernetes.io/part-of: notation-aws-verifier
+    app.kubernetes.io/version: v1.0.0
+    helm.sh/chart: notation-aws-verifier-1.0.0
+spec:
+  type: ClusterIP
+  ports:
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: https
+    - name: probes
+      port: 8081
+      protocol: TCP
+      targetPort: probes
+  selector:
+    app.kubernetes.io/name: notation-aws-verifier
+    app.kubernetes.io/instance: notation-aws-verifier
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notation-aws-verifier
+  namespace: notation-aws-verifier
+  labels:
+    app.kubernetes.io/instance: notation-aws-verifier
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: notation-aws-verifier
+    app.kubernetes.io/part-of: notation-aws-verifier
+    app.kubernetes.io/version: v1.0.0
+    helm.sh/chart: notation-aws-verifier-1.0.0
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: notation-aws-verifier
+      app.kubernetes.io/instance: notation-aws-verifier
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: notation-aws-verifier
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: notation-aws-verifier
+        app.kubernetes.io/part-of: notation-aws-verifier
+        app.kubernetes.io/version: v1.0.0
+        helm.sh/chart: notation-aws-verifier-1.0.0
+    spec:
+      serviceAccountName: notation-aws-verifier
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: notation-aws-verifier
+          image: "ghcr.io/krax1337/notation-aws-verifier:v1.0.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - --logLevel=info
+            - --logFormat=text
+            - --cacheEnabled=true
+            - --cacheMaxSize=2000
+            - --cacheTTLDurationSeconds=7200
+            - --reviewKyvernoToken=true
+            - --allowedUsers=system:serviceaccount:kyverno:kyverno-admission-controller,system:serviceaccount:kyverno:kyverno-reports-controller
+            - --pluginConfigMap=notation-plugin-config
+            - --allowInsecureRegistry=false
+            - --maxSignatureAttempts=30
+          ports:
+            - name: https
+              containerPort: 9443
+              protocol: TCP
+            - name: http
+              containerPort: 9080
+              protocol: TCP
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            - name: probes
+              containerPort: 8081
+              protocol: TCP
+          env:
+            - name: NOTATION_DIR
+              value: /notation
+            - name: AWS_ECR_CACHE_DIR
+              value: /tmp/.ecr
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SERVICE_NAME
+              value: notation-aws-verifier-svc
+            - name: DEPLOYMENT_NAME
+              value: notation-aws-verifier
+            - name: AWS_REGION
+              value: "us-west-2"
+            - name: DEFAULT_TRUST_POLICY
+              value: "aws-signer-trust-policy"
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          startupProbe:
+            failureThreshold: 20
+            httpGet:
+              path: /readyz
+              port: probes
+              scheme: HTTP
+            initialDelaySeconds: 2
+            periodSeconds: 6
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /healthz
+              port: probes
+              scheme: HTTP
+            periodSeconds: 20
+            successThreshold: 1
+            timeoutSeconds: 5
+          readinessProbe:
+            failureThreshold: 6
+            httpGet:
+              path: /readyz
+              port: probes
+              scheme: HTTP
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: notation
+              mountPath: /notation
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: notation
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

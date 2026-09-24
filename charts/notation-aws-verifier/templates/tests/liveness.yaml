@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ template "notation-aws-verifier.fullname" . }}-test-liveness
+  namespace: {{ template "notation-aws-verifier.namespace" . }}
+  labels:
+    {{- include "notation-aws-verifier.test.labels" . | nindent 4 }}
+  annotations:
+    {{- include "notation-aws-verifier.test.annotations" . | nindent 4 }}
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: {{ include "notation-aws-verifier.test.image" . | quote }}
+      imagePullPolicy: {{ template "notation-aws-verifier.test.imagePullPolicy" . }}
+      {{- with .Values.test.resources }}
+      resources:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.test.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      command:
+        - /bin/sh
+        - -c
+        - sleep {{ .Values.test.sleep }} ; wget -O- -S http://{{ template "notation-aws-verifier.serviceName" . }}.{{ template "notation-aws-verifier.namespace" . }}.svc:8081/healthz
+  {{- with .Values.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}

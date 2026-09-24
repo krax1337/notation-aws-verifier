@@ -1,0 +1,18 @@
+Thank you for installing {{ .Chart.Name }} {{ .Chart.Version }} (app {{ .Chart.AppVersion }}).
+Your release is named {{ .Release.Name }}.
+
+Kyverno policies call the service at:
+
+  https://{{ include "notation-aws-verifier.serviceName" . }}.{{ include "notation-aws-verifier.namespace" . }}.svc/checkimages
+
+The serving certificate is self-signed and stored in the Secret
+"{{ include "notation-aws-verifier.serviceName" . }}.{{ include "notation-aws-verifier.namespace" . }}.svc.tls-pair"; read its "tls.crt" key
+in the policy (apiCall urlPath
+/api/v1/namespaces/{{ include "notation-aws-verifier.namespace" . }}/secrets/{{ include "notation-aws-verifier.serviceName" . }}.{{ include "notation-aws-verifier.namespace" . }}.svc.tls-pair)
+and pass it as the service caBundle.
+
+Create a TrustStore and TrustPolicy (notation.nirmata.io/v1alpha1) before enabling the policy.
+{{- if .Values.tokenReview.enabled }}
+
+Only these callers are accepted: {{ join ", " .Values.tokenReview.allowedUsers }}
+{{- end }}

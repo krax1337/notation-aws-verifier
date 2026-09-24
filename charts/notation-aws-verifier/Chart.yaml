@@ -1,0 +1,22 @@
+apiVersion: v2
+type: application
+name: notation-aws-verifier
+version: 1.0.0
+appVersion: "v1.0.0"
+kubeVersion: ">=1.25.0-0"
+description: Kyverno extension service that verifies Notation signatures made with AWS Signer and resolves image tags to digests
+home: https://github.com/krax1337/notation-aws-verifier
+sources:
+  - https://github.com/krax1337/notation-aws-verifier
+maintainers:
+  - name: krax1337
+    url: https://github.com/krax1337
+keywords:
+  - kubernetes
+  - kyverno
+  - notation
+  - aws-signer
+  - image-verification
+  - supply-chain-security
+annotations:
+  artifacthub.io/license: Apache-2.0
