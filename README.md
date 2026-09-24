@@ -3,6 +3,7 @@
 [![CI](https://github.com/krax1337/notation-aws-verifier/actions/workflows/ci.yaml/badge.svg)](https://github.com/krax1337/notation-aws-verifier/actions/workflows/ci.yaml)
 [![Release](https://img.shields.io/github/v/release/krax1337/notation-aws-verifier)](https://github.com/krax1337/notation-aws-verifier/releases)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/krax1337/notation-aws-verifier/badge)](https://scorecard.dev/viewer/?uri=github.com/krax1337/notation-aws-verifier)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14823/badge)](https://www.bestpractices.dev/projects/14823)
 [![Go Report Card](https://goreportcard.com/badge/github.com/krax1337/notation-aws-verifier)](https://goreportcard.com/report/github.com/krax1337/notation-aws-verifier)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
