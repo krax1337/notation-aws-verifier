@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Base images are pinned by digest directly in `FROM`, so Dependabot keeps tag and digest current.
+- Releases attach a keyless cosign signature of `checksums.txt` and the SLSA provenance bundle.
+- Added a fuzz test for `/checkimages` request parsing.
+- Added `osv-scanner.toml` documenting advisories that do not affect this service.
+
 ## [1.0.0] - 2026-09-24
 
 First release of `notation-aws-verifier`, forked from
