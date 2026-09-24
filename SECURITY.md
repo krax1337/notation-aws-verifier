@@ -61,3 +61,15 @@ Verify a downloaded release binary archive:
 gh attestation verify notation-aws-verifier_1.0.0_linux_amd64.tar.gz \
   --repo krax1337/notation-aws-verifier
 ```
+
+Each release attaches `notation-aws-verifier_<version>.intoto.jsonl` (the SLSA
+provenance bundle, usable with `gh attestation verify --bundle`). Releases after
+v1.0.0 also attach `checksums.txt.sigstore.json`, a keyless cosign signature of
+`checksums.txt`, so archives can be verified offline from the release page:
+
+```sh
+cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/krax1337/notation-aws-verifier/.github/workflows/release.yaml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum --ignore-missing -c checksums.txt
+```

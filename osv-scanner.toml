@@ -1,0 +1,40 @@
+# Advisories reported by OSV-based scanners (osv-scanner, OpenSSF Scorecard) that
+# do not affect this service. govulncheck, which checks reachability, reports none
+# of them as called; see .govulncheck-ignore and .trivyignore.yaml for the same
+# decisions in CI. Review on every dependency bump; remove entries once fixed.
+
+# github.com/kyverno/kyverno: module-wide advisories without a fixed version.
+# They concern the Kyverno admission controller (apiCall, service calls, policy
+# context loading). This service only imports condition evaluation, JMESPath and
+# image helpers and never makes Kyverno service or API calls.
+[[IgnoredVulns]]
+id = "GO-2025-3615"
+reason = "Kyverno SSRF via service calls; not used, no fixed version"
+
+[[IgnoredVulns]]
+id = "GO-2026-5337"
+reason = "Kyverno cross-namespace read in policy context; not used, no fixed version"
+
+[[IgnoredVulns]]
+id = "GO-2026-5594"
+reason = "Kyverno apiCall SSRF; apiCall not used, no fixed version"
+
+# Pulled in transitively by Kyverno's API package (via cosign CLI options).
+# The ACR credential helper is linked but never invoked: registry credentials come
+# from the ECR helper and image pull secrets only. No fixed version exists.
+[[IgnoredVulns]]
+id = "GO-2026-6225"
+reason = "docker-credential-acr-env credential leakage; ACR helper never invoked, no fixed version"
+
+# Advisory against the deprecated golang.org/x/crypto/openpgp package as a whole.
+# Only x/crypto/cryptobyte and other packages are used; openpgp is not imported.
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "x/crypto/openpgp unmaintained; openpgp is not imported"
+
+# gRPC-Go server panic on missing :authority/Host. grpc is indirect and this
+# binary runs no gRPC server. Fixed only in a 1.85.0 development build.
+[[IgnoredVulns]]
+id = "GO-2026-6443"
+ignoreUntil = 2026-12-31
+reason = "grpc server panic; no gRPC server runs; fix only in 1.85.0-dev"

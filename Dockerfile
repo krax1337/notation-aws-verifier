@@ -1,9 +1,7 @@
 # syntax=docker/dockerfile:1
-ARG BUILDER_IMAGE="golang:1.26.8-alpine3.24"
-# gcr.io/distroless/static:nonroot, pinned by digest (multi-arch index).
-ARG BASE_IMAGE="gcr.io/distroless/static:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3"
-
-FROM --platform=$BUILDPLATFORM $BUILDER_IMAGE AS builder
+# Base images are pinned by multi-arch index digest directly in FROM so that
+# Dependabot can bump tag and digest together.
+FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine3.24@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -37,7 +35,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -ldflags="-s -w -X main.version=${VERSION}" \
       -o /out/notation-aws-verifier .
 
-FROM $BASE_IMAGE
+FROM gcr.io/distroless/static:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
 
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="notation-aws-verifier" \
