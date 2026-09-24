@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -55,19 +57,62 @@ func getEnvWithFallback(name, fallback string) string {
 	return fallback
 }
 
-func parseLevel(s string) zapcore.Level {
+// traceLevel is below debug; notation plugin and Kyverno V(2) logs use it.
+const traceLevel = zapcore.Level(-2)
+
+func parseLevel(s string) (zapcore.Level, error) {
 	switch strings.ToLower(s) {
 	case "trace":
-		return zapcore.Level(-2)
+		return traceLevel, nil
 	case "debug":
-		return zapcore.DebugLevel
+		return zapcore.DebugLevel, nil
 	case "info":
-		return zapcore.InfoLevel
-	case "warn":
-		return zapcore.WarnLevel
+		return zapcore.InfoLevel, nil
+	case "warn", "warning":
+		return zapcore.WarnLevel, nil
 	case "error":
-		return zapcore.ErrorLevel
+		return zapcore.ErrorLevel, nil
 	default:
-		return zapcore.InfoLevel
+		return zapcore.InfoLevel, fmt.Errorf("invalid log level %q: must be one of trace, debug, info, warn, error", s)
 	}
+}
+
+// newLogger builds the process logger. format "json" uses zap's production
+// JSON encoder, "text" the human readable console encoder.
+func newLogger(format, level string) (*zap.Logger, error) {
+	lvl, err := parseLevel(level)
+	if err != nil {
+		return nil, err
+	}
+
+	var cfg zap.Config
+	switch strings.ToLower(format) {
+	case "json":
+		cfg = zap.NewProductionConfig()
+		cfg.EncoderConfig.TimeKey = "ts"
+		cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	case "text":
+		cfg = zap.NewDevelopmentConfig()
+		// Development mode makes DPanic panic; never do that in a webhook backend.
+		cfg.Development = false
+	default:
+		return nil, fmt.Errorf("invalid log format %q: must be one of text, json", format)
+	}
+	cfg.Level = zap.NewAtomicLevelAt(lvl)
+	// Never drop admission logs.
+	cfg.Sampling = nil
+
+	return cfg.Build(zap.AddStacktrace(zapcore.DPanicLevel))
+}
+
+// splitList splits a comma-separated flag value, trimming blanks and dropping
+// empty elements.
+func splitList(s string) []string {
+	var out []string
+	for _, item := range strings.Split(s, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }

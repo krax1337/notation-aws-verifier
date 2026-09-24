@@ -3,41 +3,48 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
-	"github.com/awslabs/amazon-ecr-credential-helper/ecr-login"
+	ecr "github.com/awslabs/amazon-ecr-credential-helper/ecr-login"
 	"github.com/go-logr/zapr"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/kyverno/kyverno/pkg/leaderelection"
 	"github.com/kyverno/pkg/certmanager"
 	tlsMgr "github.com/kyverno/pkg/tls"
-	"github.com/nirmata/kyverno-notation-verifier/kubenotation"
-	knvSetup "github.com/nirmata/kyverno-notation-verifier/setup"
-	knvVerifier "github.com/nirmata/kyverno-notation-verifier/verifier"
 	_ "github.com/notaryproject/notation-core-go/signature/cose"
 	_ "github.com/notaryproject/notation-core-go/signature/jws"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	ctrl "sigs.k8s.io/controller-runtime"
+	"k8s.io/klog/v2"
+
+	"github.com/krax1337/notation-aws-verifier/internal/kubenotation"
+	"github.com/krax1337/notation-aws-verifier/internal/setup"
+	"github.com/krax1337/notation-aws-verifier/internal/verifier"
 )
+
+// version is set at build time with -ldflags "-X main.version=<version>".
+var version = "dev"
 
 var (
 	Namespace      = os.Getenv("POD_NAMESPACE")
 	PodName        = os.Getenv("POD_NAME")
-	ServiceName    = getEnvWithFallback("SERVICE_NAME", "svc")
-	DeploymentName = getEnvWithFallback("DEPLOYMENT_NAME", "kyverno-notation-aws")
+	ServiceName    = getEnvWithFallback("SERVICE_NAME", "notation-aws-verifier-svc")
+	DeploymentName = getEnvWithFallback("DEPLOYMENT_NAME", "notation-aws-verifier")
 
 	CertRenewalInterval = 12 * time.Hour
 	CAValidityDuration  = 365 * 24 * time.Hour
@@ -46,80 +53,141 @@ var (
 	resyncPeriod = 15 * time.Minute
 )
 
-func main() {
-	var (
-		flagLocal                   bool
-		flagNoTLS                   bool
-		flagImagePullSecrets        string
-		flagAllowInsecureRegistry   bool
-		flagNotationPluginConfigMap string
-		flagEnableDebug             bool
-		flagMaxSignatureAtempts     int
-		metricsAddr                 string
-		probeAddr                   string
-		enableLeaderElection        bool
-		cacheEnabled                bool
-		cacheMaxSize                int64
-		cacheTTLDuration            int64
-		allowedUsers                string
-		reviewKyvernoToken          bool
-		flagLogLevel                string
-	)
+const (
+	httpAddr        = ":9080"
+	httpsAddr       = ":9443"
+	shutdownTimeout = 20 * time.Second
+)
 
-	flag.BoolVar(&flagLocal, "local", false, "Use local system notation configuration")
-	flag.BoolVar(&flagNoTLS, "notls", false, "Do not start the TLS server")
-	flag.StringVar(&flagImagePullSecrets, "imagePullSecrets", "", "Secret resource names for image registry access credentials.")
-	flag.BoolVar(&flagAllowInsecureRegistry, "allowInsecureRegistry", false, "Whether to allow insecure connections to registries. Not recommended.")
-	flag.StringVar(&flagNotationPluginConfigMap, "pluginConfigMap", "notation-plugin-config", "ConfigMap with notation plugin configuration")
-	flag.BoolVar(&flagEnableDebug, "debug", false, "Enable debug logging")
-	flag.IntVar(&flagMaxSignatureAtempts, "maxSignatureAttempts", 30, "Maximum number of signature envelopes that will be processed for verification")
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
+type options struct {
+	local                 bool
+	noTLS                 bool
+	imagePullSecrets      string
+	allowInsecureRegistry bool
+	pluginConfigMap       string
+	debug                 bool
+	maxSignatureAttempts  int
+	metricsAddr           string
+	probeAddr             string
+	leaderElect           bool
+	cacheEnabled          bool
+	cacheMaxSize          int64
+	cacheTTLSeconds       int64
+	allowedUsers          string
+	reviewKyvernoToken    bool
+	tokenReviewAudiences  string
+	logLevel              string
+	logLevelSet           bool
+	logFormat             string
+	showVersion           bool
+}
+
+func parseFlags() options {
+	var o options
+	flag.BoolVar(&o.local, "local", false, "Use local system notation configuration")
+	flag.BoolVar(&o.noTLS, "notls", false, "Do not start the TLS server")
+	flag.StringVar(&o.imagePullSecrets, "imagePullSecrets", "", "Comma-separated secret resource names for image registry access credentials.")
+	flag.BoolVar(&o.allowInsecureRegistry, "allowInsecureRegistry", false, "Whether to allow insecure connections to registries. Not recommended.")
+	flag.StringVar(&o.pluginConfigMap, "pluginConfigMap", "notation-plugin-config", "ConfigMap with notation plugin configuration")
+	flag.BoolVar(&o.debug, "debug", false, "Enable notation and plugin debug output. Implies --logLevel=debug unless --logLevel is set.")
+	flag.IntVar(&o.maxSignatureAttempts, "maxSignatureAttempts", 30, "Maximum number of signature envelopes that will be processed for verification")
+	flag.StringVar(&o.metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
+	flag.StringVar(&o.probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.BoolVar(&o.leaderElect, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
-	flag.BoolVar(&cacheEnabled, "cacheEnabled", true, "Whether to use a TTL cache for storing verified images, default is true")
-	flag.Int64Var(&cacheMaxSize, "cacheMaxSize", 1000, "Max size limit for the TTL cache, default is 1000.")
-	flag.Int64Var(&cacheTTLDuration, "cacheTTLDurationSeconds", int64(1*time.Hour), "Max TTL value for a cache in seconds, default is 1 hour.")
-	flag.BoolVar(&reviewKyvernoToken, "reviewKyvernoToken", true, "Checks if the Auth token in the request is a token from kyverno controllers or other allowed users, default is true.")
-	flag.StringVar(&allowedUsers, "allowedUsers", "system:serviceaccount:kyverno:kyverno-admission-controller,system:serviceaccount:kyverno:kyverno-reports-controller", "Comma-seperated list of all the allowed users and service accounts.")
-	flag.StringVar(&flagLogLevel, "logLevel", "info", "Log level: trace, debug, info, warn, error")
-
+	flag.BoolVar(&o.cacheEnabled, "cacheEnabled", true, "Whether to use a TTL cache for storing verified images.")
+	flag.Int64Var(&o.cacheMaxSize, "cacheMaxSize", 1000, "Maximum number of entries in the TTL cache.")
+	flag.Int64Var(&o.cacheTTLSeconds, "cacheTTLDurationSeconds", 3600, "TTL of a cache entry in seconds.")
+	flag.BoolVar(&o.reviewKyvernoToken, "reviewKyvernoToken", true, "Checks if the Auth token in the request is a token from kyverno controllers or other allowed users.")
+	flag.StringVar(&o.allowedUsers, "allowedUsers", "system:serviceaccount:kyverno:kyverno-admission-controller,system:serviceaccount:kyverno:kyverno-reports-controller", "Comma-separated list of all the allowed users and service accounts.")
+	flag.StringVar(&o.tokenReviewAudiences, "tokenReviewAudiences", "", "Comma-separated audiences for the TokenReview of request tokens. Empty uses the API server's default audience.")
+	flag.StringVar(&o.logLevel, "logLevel", "info", "Log level: trace, debug, info, warn, error")
+	flag.StringVar(&o.logFormat, "logFormat", "text", "Log format: text or json")
+	flag.BoolVar(&o.showVersion, "version", false, "Print the version and exit")
 	flag.Parse()
-	zc := zap.NewDevelopmentConfig()
-	zc.Level = zap.NewAtomicLevelAt(parseLevel(flagLogLevel))
 
-	logger, err := zc.Build()
-	if err != nil {
-		log.Fatalf("failed to initialize logger: %v", err)
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "logLevel" {
+			o.logLevelSet = true
+		}
+	})
+	return o
+}
+
+// effectiveLogLevel keeps --debug working as it did before --logLevel existed.
+func (o options) effectiveLogLevel() string {
+	if o.debug && !o.logLevelSet {
+		return "debug"
+	}
+	return o.logLevel
+}
+
+func (o options) cacheTTL() (time.Duration, error) {
+	if o.cacheTTLSeconds <= 0 || o.cacheTTLSeconds > math.MaxInt64/int64(time.Second) {
+		return 0, fmt.Errorf("invalid --cacheTTLDurationSeconds %d", o.cacheTTLSeconds)
+	}
+	return time.Duration(o.cacheTTLSeconds) * time.Second, nil
+}
+
+func main() {
+	o := parseFlags()
+	if o.showVersion {
+		fmt.Println(version)
+		return
 	}
 
-	slog := logger.Sugar().WithOptions(zap.AddStacktrace(zap.DPanicLevel))
+	logger, err := newLogger(o.logFormat, o.effectiveLogLevel())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
+	// Route klog (client-go) and the standard library logger through zap so
+	// that every line honours --logFormat.
+	klog.SetLogger(zapr.NewLogger(logger).WithName("klog"))
+	undoStdLog := zap.RedirectStdLog(logger.Named("stdlog"))
+
+	err = run(logger, o)
+	undoStdLog()
+	if err != nil {
+		logger.Error("exiting", zap.Error(err))
+		_ = logger.Sync()
+		os.Exit(1)
+	}
+	_ = logger.Sync()
+}
+
+func run(logger *zap.Logger, o options) error {
+	slog := logger.Sugar()
+	slog.Infow("starting notation-aws-verifier", "version", version)
+
+	cacheTTL, err := o.cacheTTL()
+	if err != nil {
+		return err
+	}
 
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		log.Fatalf("failed to get kubernetes cluster config: %v", err)
+		return fmt.Errorf("failed to get kubernetes cluster config: %w", err)
 	}
 	kubeClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		log.Fatalf("failed to initialize kube client: %v", err)
+		return fmt.Errorf("failed to initialize kube client: %w", err)
 	}
 
-	signalCtx, sdown := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer sdown()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	tlsMgrConfig := &tlsMgr.Config{
 		ServiceName: ServiceName,
 		Namespace:   Namespace,
 	}
 
-	caStopCh := make(chan struct{}, 1)
 	caInformer := NewSecretInformer(kubeClient, Namespace, tlsMgr.GenerateRootCASecretName(tlsMgrConfig), resyncPeriod)
-	go caInformer.Informer().Run(caStopCh)
+	go caInformer.Informer().Run(ctx.Done())
 
-	tlsStopCh := make(chan struct{}, 1)
 	tlsInformer := NewSecretInformer(kubeClient, Namespace, tlsMgr.GenerateTLSPairSecretName(tlsMgrConfig), resyncPeriod)
-	go tlsInformer.Informer().Run(tlsStopCh)
+	go tlsInformer.Informer().Run(ctx.Done())
 
 	le, err := leaderelection.New(
 		zapr.NewLogger(logger).WithName("leader-election"),
@@ -128,8 +196,7 @@ func main() {
 		kubeClient,
 		PodName,
 		2*time.Second,
-		func(ctx context.Context) {
-
+		func(context.Context) {
 			certRenewer := tlsMgr.NewCertRenewer(
 				zapr.NewLogger(logger).WithName("tls").WithValues("pod", PodName),
 				kubeClient.CoreV1().Secrets(Namespace),
@@ -153,7 +220,7 @@ func main() {
 			// start leader controllers
 			var wg sync.WaitGroup
 			for _, controller := range leaderControllers {
-				controller.Run(signalCtx, zapr.NewLogger(logger).WithName("controllers"), &wg)
+				controller.Run(ctx, zapr.NewLogger(logger).WithName("controllers"), &wg)
 			}
 			// wait all controllers shut down
 			wg.Wait()
@@ -161,128 +228,167 @@ func main() {
 		nil,
 	)
 	if err != nil {
-		log.Fatalf("failed to initialize leader election: %v", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to initialize leader election: %w", err)
 	}
+	go le.Run(ctx)
 
-	// start leader election
-	go func() {
-		select {
-		case <-signalCtx.Done():
-			return
-		default:
-			le.Run(signalCtx)
+	if !o.local {
+		if err := setup.Local(slog); err != nil {
+			return err
 		}
-	}()
-
-	crdSetup, err := kubenotation.Setup(zapr.NewLogger(logger), metricsAddr, probeAddr, enableLeaderElection)
-	if err != nil {
-		log.Fatalf("failed to initialize crds: %v", err)
 	}
 
-	crdManager := *crdSetup.CRDManager
-	crdChangeChan := *crdSetup.CRDChangeInformer
+	crdSetup, err := kubenotation.Setup(zapr.NewLogger(logger), o.metricsAddr, o.probeAddr, o.leaderElect)
+	if err != nil {
+		return fmt.Errorf("failed to initialize crds: %w", err)
+	}
+
+	// Not ready until the verifier serves requests, so Services do not route
+	// admission calls to a pod that would refuse them.
+	var ready atomic.Bool
+	if err := crdSetup.CRDManager.AddReadyzCheck("verifier", func(*http.Request) error {
+		if !ready.Load() {
+			return errors.New("verifier not serving")
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to add readiness check: %w", err)
+	}
 
 	slog.Info("Starting CRD Manager")
 	errsMgr := make(chan error, 1)
 	go func() {
-		errsMgr <- crdManager.Start(ctrl.SetupSignalHandler())
+		errsMgr <- crdSetup.CRDManager.Start(ctx)
 	}()
-	slog.Info("CRD Manager Started")
 
-	if !flagLocal {
-		knvSetup.SetupLocal(slog)
+	v, err := verifier.NewVerifier(slog,
+		verifier.WithImagePullSecrets(o.imagePullSecrets),
+		verifier.WithInsecureRegistry(o.allowInsecureRegistry),
+		verifier.WithPluginConfig(o.pluginConfigMap),
+		verifier.WithMaxSignatureAttempts(o.maxSignatureAttempts),
+		verifier.WithEnableDebug(o.debug),
+		verifier.WithProviderKeychain(authn.NewKeychainFromHelper(ecr.NewECRHelper(ecr.WithLogger(io.Discard)))),
+		verifier.WithTokenReviewEnabled(o.reviewKyvernoToken),
+		verifier.WithTokenReviewAudiences(splitList(o.tokenReviewAudiences)),
+		verifier.WithCacheEnabled(o.cacheEnabled),
+		verifier.WithMaxCacheSize(o.cacheMaxSize),
+		verifier.WithMaxCacheTTL(cacheTTL),
+		verifier.WithAllowedUsers(splitList(o.allowedUsers)))
+	if err != nil {
+		return fmt.Errorf("failed to initialize verifier: %w", err)
 	}
-
-	verifier := knvVerifier.NewVerifier(slog,
-		knvVerifier.WithImagePullSecrets(flagImagePullSecrets),
-		knvVerifier.WithInsecureRegistry(flagAllowInsecureRegistry),
-		knvVerifier.WithPluginConfig(flagNotationPluginConfigMap),
-		knvVerifier.WithMaxSignatureAttempts(flagMaxSignatureAtempts),
-		knvVerifier.WithEnableDebug(flagEnableDebug),
-		knvVerifier.WithProviderKeychain(authn.NewKeychainFromHelper(ecr.NewECRHelper(ecr.WithLogger(io.Discard)))),
-		knvVerifier.WithTokenReviewEnabled(reviewKyvernoToken),
-		knvVerifier.WithCacheEnabled(cacheEnabled),
-		knvVerifier.WithMaxCacheSize(cacheMaxSize),
-		knvVerifier.WithMaxCacheTTL(time.Duration(cacheTTLDuration*int64(time.Second))),
-		knvVerifier.WithAllowedUsers(strings.Split(allowedUsers, ",")))
+	defer v.Stop()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/checkimages", verifier.HandleCheckImages)
-	errsHTTP := make(chan error, 1)
-	go func() {
-		errsHTTP <- http.ListenAndServe(":9080", mux)
-	}()
+	mux.HandleFunc("/checkimages", v.HandleCheckImages)
 
-	errsTLS := make(chan error, 1)
-	if !flagNoTLS {
-		tlsConf := &tls.Config{
-			GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-				secret, err := tlsInformer.Lister().Secrets(tlsMgrConfig.Namespace).Get(tlsMgr.GenerateTLSPairSecretName(tlsMgrConfig))
-				if err != nil {
-					return nil, err
-				} else if secret == nil {
-					return nil, errors.New("tls secret not found")
-				} else if secret.Type != corev1.SecretTypeTLS {
-					return nil, errors.New("secret is not a TLS secret")
-				}
+	errorLog := zap.NewStdLog(logger.Named("http"))
+	servers := []*http.Server{newServer(httpAddr, mux, nil, errorLog)}
+	if !o.noTLS {
+		servers = append(servers, newServer(httpsAddr, mux, newTLSConfig(tlsInformer, tlsMgrConfig), errorLog))
+	}
 
-				cert, err := tls.X509KeyPair(secret.Data[corev1.TLSCertKey], secret.Data[corev1.TLSPrivateKeyKey])
-				if err != nil {
-					return nil, err
-				}
-
-				return &cert, nil
-			},
-		}
-		srv := &http.Server{
-			Addr:              ":9443",
-			Handler:           mux,
-			TLSConfig:         tlsConf,
-			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      30 * time.Second,
-			ReadHeaderTimeout: 30 * time.Second,
-			IdleTimeout:       1 * time.Minute,
-		}
-
+	errsSrv := make(chan error, len(servers))
+	for _, srv := range servers {
 		go func() {
-			errsTLS <- srv.ListenAndServeTLS("", "")
+			var err error
+			if srv.TLSConfig != nil {
+				err = srv.ListenAndServeTLS("", "")
+			} else {
+				err = srv.ListenAndServe()
+			}
+			errsSrv <- fmt.Errorf("server %s: %w", srv.Addr, err)
 		}()
 	}
 
+	ready.Store(true)
 	slog.Info("Listening for requests...")
+
+	var runErr error
+loop:
 	for {
 		select {
-		case crdChanged := <-crdChangeChan:
-			slog.Infof("CRD Changed, updating notation verifier %v", crdChanged)
-			err := verifier.UpdateNotationVerfier()
-			if err != nil {
-				slog.Infof("failed to update verifier, reverting update err: %v", err)
+		case <-crdSetup.CRDChangeInformer:
+			slog.Info("Trust policies or trust stores changed, updating notation verifier")
+			if err := v.UpdateNotationVerifier(); err != nil {
+				slog.Errorf("failed to update verifier, keeping the previous one: %v", err)
+			} else {
+				slog.Info("Notation verifier updated")
 			}
-			slog.Infof("Notation verifier updated %v", crdChanged)
-		case err := <-errsHTTP:
-			slog.Infof("HTTP server error: %v", err)
-			verifier.Stop()
-			Shutdown(slog, &caStopCh, &tlsStopCh)
-			os.Exit(-1)
-
-		case err := <-errsTLS:
-			slog.Infof("TLS server error: %v", err)
-			verifier.Stop()
-			Shutdown(slog, &caStopCh, &tlsStopCh)
-			os.Exit(-1)
-
+		case err := <-errsSrv:
+			runErr = err
+			break loop
 		case err := <-errsMgr:
-			slog.Infof("problem running manager: %v", err)
-			verifier.Stop()
-			Shutdown(slog, &caStopCh, &tlsStopCh)
-			os.Exit(-1)
+			if err == nil && ctx.Err() == nil {
+				err = errors.New("manager stopped unexpectedly")
+			}
+			if err != nil {
+				runErr = fmt.Errorf("problem running manager: %w", err)
+			}
+			break loop
+		case <-ctx.Done():
+			slog.Info("Shutdown signal received")
+			break loop
 		}
+	}
+
+	ready.Store(false)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	for _, srv := range servers {
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Warnf("failed to shut down server %s: %v", srv.Addr, err)
+		}
+	}
+	stop()
+	return runErr
+}
+
+// newServer returns an HTTP server with timeouts, so slow clients cannot hold
+// connections and goroutines forever.
+func newServer(addr string, handler http.Handler, tlsConf *tls.Config, errorLog *log.Logger) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		TLSConfig:         tlsConf,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       time.Minute,
+		ErrorLog:          errorLog,
 	}
 }
 
-func Shutdown(slog *zap.SugaredLogger, caStopCh *chan struct{}, tlsStopCh *chan struct{}) {
-	slog.Sync()
-	*caStopCh <- struct{}{}
-	*tlsStopCh <- struct{}{}
+// newTLSConfig serves the certificate from the TLS secret maintained by the
+// cert manager, re-parsing it only when the secret changes.
+func newTLSConfig(informer corev1informers.SecretInformer, cfg *tlsMgr.Config) *tls.Config {
+	type parsedCert struct {
+		resourceVersion string
+		cert            *tls.Certificate
+	}
+	secretName := tlsMgr.GenerateTLSPairSecretName(cfg)
+	var current atomic.Pointer[parsedCert]
+
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			secret, err := informer.Lister().Secrets(cfg.Namespace).Get(secretName)
+			if err != nil {
+				return nil, err
+			}
+			if secret.Type != corev1.SecretTypeTLS {
+				return nil, errors.New("secret is not a TLS secret")
+			}
+			if c := current.Load(); c != nil && c.resourceVersion == secret.ResourceVersion {
+				return c.cert, nil
+			}
+
+			cert, err := tls.X509KeyPair(secret.Data[corev1.TLSCertKey], secret.Data[corev1.TLSPrivateKeyKey])
+			if err != nil {
+				return nil, err
+			}
+			current.Store(&parsedCert{resourceVersion: secret.ResourceVersion, cert: &cert})
+			return &cert, nil
+		},
+	}
 }

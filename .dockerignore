@@ -1,4 +1,24 @@
-# More info: https://docs.docker.com/engine/reference/builder/#dockerignore-file
-# Ignore build and test binaries.
+# Only Go sources, go.mod/go.sum and internal/ are needed to build the image.
+.git/
+.github/
+.docs/
+.vscode/
+.idea/
+.tools/
 bin/
 testbin/
+dist/
+.chart-dist/
+charts/
+configs/
+img/
+scripts/
+*.md
+!internal/README.md
+*.tgz
+*.out
+coverage.*
+scan.json
+Dockerfile
+.dockerignore
+.goreleaser.yaml
