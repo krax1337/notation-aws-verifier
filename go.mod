@@ -23,8 +23,8 @@ require (
 	k8s.io/apimachinery v0.37.1
 	k8s.io/client-go v0.37.1
 	k8s.io/klog/v2 v2.140.0
-	oras.land/oras-go/v2 v2.6.2
-	sigs.k8s.io/controller-runtime v0.25.1
+	oras.land/oras-go/v2 v2.6.4
+	sigs.k8s.io/controller-runtime v0.25.2
 )
 
 require (
@@ -278,7 +278,7 @@ require (
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
