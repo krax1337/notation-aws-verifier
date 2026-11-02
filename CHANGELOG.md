@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-02
+
 ### Security
 
+- Built with Go 1.26.10 (was 1.26.8), fixing reachable standard-library vulnerabilities in
+  `crypto/x509`, `crypto/tls`, `net/http` and HTTP/2 (CVE-2026-111943, CVE-2026-78667,
+  CVE-2026-78669, CVE-2026-97031). Users of `v1.0.0` should upgrade.
+- Bumped `github.com/go-jose/go-jose/v4` to v4.1.6 (CVE-2026-116587) and `golang.org/x/net`
+  to v0.60.0 (CVE-2026-78669).
 - Base images are pinned by digest directly in `FROM`, so Dependabot keeps tag and digest current.
 - Releases attach a keyless cosign signature of `checksums.txt` and the SLSA provenance bundle.
 - Added a fuzz test for `/checkimages` request parsing.
@@ -78,5 +85,6 @@ First release of `notation-aws-verifier`, forked from
 - Release images and charts are signed with cosign (keyless) and ship SLSA build provenance
   and SBOM attestations.
 
-[Unreleased]: https://github.com/krax1337/notation-aws-verifier/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/krax1337/notation-aws-verifier/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/krax1337/notation-aws-verifier/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/krax1337/notation-aws-verifier/releases/tag/v1.0.0
