@@ -1,6 +1,6 @@
 # notation-aws-verifier
 
-![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: v1.0.0](https://img.shields.io/badge/AppVersion-v1.0.0-informational?style=flat-square)
+![Version: 1.0.1](https://img.shields.io/badge/Version-1.0.1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: v1.0.1](https://img.shields.io/badge/AppVersion-v1.0.1-informational?style=flat-square)
 
 Kyverno extension service that verifies Notation signatures made with AWS Signer and resolves image tags to digests
 
@@ -10,7 +10,7 @@ Kyverno extension service that verifies Notation signatures made with AWS Signer
 
 ```sh
 helm install notation-aws-verifier oci://ghcr.io/krax1337/charts/notation-aws-verifier \
-  --version 1.0.0 \
+  --version 1.0.1 \
   -n notation-aws-verifier --create-namespace
 ```
 
