@@ -22,7 +22,7 @@ and [Notation](https://notaryproject.dev/), and pins verified images to their di
 
 ## Why this fork
 
-| | `nirmata/kyverno-notation-aws` `v1.1` | `notation-aws-verifier` `v1.0.0` |
+| | `nirmata/kyverno-notation-aws` `v1.1` | `notation-aws-verifier` `v1.0.1` |
 | --- | --- | --- |
 | EKS Pod Identity | fails (`only loopback hosts are allowed`) | works (signer plugin built from source against a current AWS SDK) |
 | arm64 image | ships an amd64 signer plugin | native multi-arch (amd64 + arm64) |
@@ -59,7 +59,7 @@ Requirements: Kubernetes 1.25+, Kyverno 1.11+, images in Amazon ECR signed with 
 ```sh
 helm install notation-aws-verifier \
   oci://ghcr.io/krax1337/charts/notation-aws-verifier \
-  --version 1.0.0 \
+  --version 1.0.1 \
   --namespace notation-aws-verifier --create-namespace \
   --set region=<your-aws-region>
 ```
@@ -69,7 +69,7 @@ All chart values are documented in [charts/notation-aws-verifier/README.md](char
 ### Plain manifests
 
 ```sh
-kubectl apply -f https://github.com/krax1337/notation-aws-verifier/releases/download/v1.0.0/install.yaml
+kubectl apply -f https://github.com/krax1337/notation-aws-verifier/releases/download/v1.0.1/install.yaml
 ```
 
 The manifest is the chart rendered with default values into namespace `notation-aws-verifier`.
@@ -78,7 +78,7 @@ Set `AWS_REGION` on the Deployment to your region.
 ### Image
 
 ```text
-ghcr.io/krax1337/notation-aws-verifier:v1.0.0   # linux/amd64, linux/arm64
+ghcr.io/krax1337/notation-aws-verifier:v1.0.1   # linux/amd64, linux/arm64
 ```
 
 ## AWS permissions
@@ -319,7 +319,7 @@ Kyverno policy URL and TLS secret path change.
    kubectl annotate crd trustpolicies.notation.nirmata.io truststores.notation.nirmata.io \
      meta.helm.sh/release-name=notation-aws-verifier meta.helm.sh/release-namespace=notation-aws-verifier --overwrite
    kubectl label crd trustpolicies.notation.nirmata.io truststores.notation.nirmata.io app.kubernetes.io/managed-by=Helm --overwrite
-   helm install notation-aws-verifier oci://ghcr.io/krax1337/charts/notation-aws-verifier --version 1.0.0 \
+   helm install notation-aws-verifier oci://ghcr.io/krax1337/charts/notation-aws-verifier --version 1.0.1 \
      -n notation-aws-verifier --create-namespace --set region=<region>
    ```
 4. Update the Kyverno policy to the new service URL and TLS secret path (see Quick start).
