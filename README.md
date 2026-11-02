@@ -1,4 +1,9 @@
-# notation-aws-verifier
+<div align="center">
+
+# 🔏 notation-aws-verifier
+
+**Only signed images run on your EKS cluster.**
+A [Kyverno](https://kyverno.io) extension that verifies [AWS Signer](https://docs.aws.amazon.com/signer/latest/developerguide/Welcome.html) / [Notation](https://notaryproject.dev/) signatures at admission and pins every verified image to its digest.
 
 [![CI](https://github.com/krax1337/notation-aws-verifier/actions/workflows/ci.yaml/badge.svg)](https://github.com/krax1337/notation-aws-verifier/actions/workflows/ci.yaml)
 [![Release](https://img.shields.io/github/v/release/krax1337/notation-aws-verifier)](https://github.com/krax1337/notation-aws-verifier/releases)
@@ -7,9 +12,18 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/krax1337/notation-aws-verifier)](https://goreportcard.com/report/github.com/krax1337/notation-aws-verifier)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-A [Kyverno](https://kyverno.io) extension service that verifies container image signatures
-made with [AWS Signer](https://docs.aws.amazon.com/signer/latest/developerguide/Welcome.html)
-and [Notation](https://notaryproject.dev/), and pins verified images to their digests.
+[Install](#install) · [Quick start](#quick-start) · [Migrate from nirmata](#migrating-from-kyverno-notation-aws) · [Configuration](#configuration)
+
+</div>
+
+## ✨ Highlights
+
+- ✅ **Blocks unsigned and untrusted images** before they reach a node, using your AWS Signer signing profiles as the trust anchor.
+- 📌 **Tag → digest pinning.** Admitted Pods are rewritten to the exact digest that was verified, so a re-pushed tag can't slip in.
+- 📄 **Attestation checks.** Verify signed SBOMs and scan reports, with conditions on their content (for example, no GPL licenses).
+- 🏢 **Multi-tenant.** `TrustPolicy` / `TrustStore` custom resources per team or namespace.
+- ☁️ **Built for EKS today.** Pod Identity and IRSA, native amd64 + arm64, GovCloud trust roots, HA Helm chart.
+- 🔐 **Practices what it preaches.** cosign-signed image and chart, SLSA provenance, SBOM, OpenSSF Scorecard.
 
 > [!NOTE]
 > **This is the maintained continuation of
@@ -20,7 +34,7 @@ and [Notation](https://notaryproject.dev/), and pins verified images to their di
 > The fixes it started from have been running in production on EKS with Pod Identity
 > since 2026.
 
-## Why this fork
+## 🆚 Why this fork
 
 | | `nirmata/kyverno-notation-aws` `v1.1` | `notation-aws-verifier` `v1.0.0` |
 | --- | --- | --- |
@@ -35,7 +49,23 @@ and [Notation](https://notaryproject.dev/), and pins verified images to their di
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
-## How it works
+## ⚙️ How it works
+
+```mermaid
+sequenceDiagram
+    participant API as Kubernetes API
+    participant K as Kyverno
+    participant V as notation-aws-verifier
+    participant ECR as Amazon ECR
+    participant S as AWS Signer
+    API->>K: admit Pod
+    K->>V: POST /checkimages (Pod images)
+    V->>API: TokenReview: is the caller Kyverno?
+    V->>ECR: pull Notation signatures
+    V->>S: check revocation status
+    V-->>K: JSON patches (tag → verified digest)
+    K-->>API: mutated Pod, or deny if unsigned/untrusted
+```
 
 1. A Kyverno policy calls the service's `/checkimages` endpoint (via `apiCall`) with the
    images of the Pod being admitted.
