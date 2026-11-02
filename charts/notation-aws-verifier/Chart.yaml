@@ -1,8 +1,8 @@
 apiVersion: v2
 type: application
 name: notation-aws-verifier
-version: 1.0.0
-appVersion: "v1.0.0"
+version: 1.0.1
+appVersion: "v1.0.1"
 kubeVersion: ">=1.25.0-0"
 description: Kyverno extension service that verifies Notation signatures made with AWS Signer and resolves image tags to digests
 home: https://github.com/krax1337/notation-aws-verifier
